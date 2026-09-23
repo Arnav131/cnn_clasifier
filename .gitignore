@@ -10,3 +10,10 @@ venv/
 
 .DS_Store
 Thumbs.db
+
+# Pipeline: resume-only / ephemeral artifacts (NOT deliverables).
+# best.pt and baseline_best.pt ARE deliverables and are intentionally
+# tracked -- do not add a blanket ignore for checkpoints/.
+checkpoints/*_last.pt
+checkpoints/mogeo_state.pkl
+checkpoints/*.tmp

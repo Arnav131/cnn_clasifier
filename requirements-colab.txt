@@ -1,0 +1,17 @@
+# Dependencies for running this pipeline on Google Colab.
+#
+# IMPORTANT: Colab's default GPU runtime already ships a CUDA-enabled
+# torch + torchvision build. Do NOT `pip install torch torchvision` from
+# this file on Colab -- reinstalling them from PyPI can silently replace
+# the GPU build with a CPU-only one, or cause a CUDA/driver version
+# mismatch. torch/torchvision are intentionally NOT pinned here.
+#
+# This file only lists the extra packages the pipeline needs on top of
+# a stock Colab runtime. Install with:
+#   pip install -q -r requirements-colab.txt
+
+pandas>=1.5
+scikit-learn>=1.2
+matplotlib>=3.6
+Pillow>=9.3
+tqdm>=4.65
