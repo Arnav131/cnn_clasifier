@@ -16,6 +16,8 @@ from typing import Dict
 # i.e. the "code" project root). Every script exposes these as CLI flags.
 # ---------------------------------------------------------------------------
 DEFAULT_DATASET_DIR = "dataset"
+DEFAULT_PREPROCESSED_DIR = "preprocessed_dataset"
+DEFAULT_FEATURES_FILENAME = "extracted_features.csv"
 DEFAULT_OUTPUT_DIR = "."
 DEFAULT_SPLITS_DIR = "splits"
 DEFAULT_CHECKPOINT_DIR = "checkpoints"
@@ -52,7 +54,8 @@ IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 # Fixed architecture / training constants
 # ---------------------------------------------------------------------------
 NUM_CLASSES = 150
-IMAGE_SIZE = 128  # matches the input resolution used by the historical model
+IMAGE_SIZE = 128  # matches the input resolution used by the model
+NUM_WORKERS = 0 if os.name == "nt" else 2  # 0 on Windows prevents spawn multiprocessing friction
 
 # Epoch guidance (per project spec -- do NOT blindly force max epochs)
 MOGEO_CANDIDATE_EPOCHS = 10
@@ -67,6 +70,7 @@ class HParams:
     """A single point in the search space MOGEO explores.
 
     Decoded from a normalized [0, 1]^d vector -- see mogeo.py HyperParamSpace.
+    Includes CNN architecture, training knobs, and feature selection flags.
     """
 
     num_blocks: int = 3
@@ -76,6 +80,13 @@ class HParams:
     weight_decay: float = 1e-4
     batch_size: int = 32
     label_smoothing: float = 0.0
+    use_features: bool = True
+    feature_proj_dim: int = 32
+    select_shape: bool = True
+    select_size: bool = True
+    select_colour: bool = True
+    select_vein: bool = True
+    select_texture: bool = True
 
     def to_dict(self) -> Dict:
         return {
@@ -86,6 +97,13 @@ class HParams:
             "weight_decay": float(self.weight_decay),
             "batch_size": self.batch_size,
             "label_smoothing": round(float(self.label_smoothing), 4),
+            "use_features": self.use_features,
+            "feature_proj_dim": self.feature_proj_dim,
+            "select_shape": self.select_shape,
+            "select_size": self.select_size,
+            "select_colour": self.select_colour,
+            "select_vein": self.select_vein,
+            "select_texture": self.select_texture,
         }
 
     @staticmethod
@@ -98,13 +116,18 @@ class HParams:
             weight_decay=float(d["weight_decay"]),
             batch_size=int(d["batch_size"]),
             label_smoothing=float(d.get("label_smoothing", 0.0)),
+            use_features=bool(d.get("use_features", True)),
+            feature_proj_dim=int(d.get("feature_proj_dim", 32)),
+            select_shape=bool(d.get("select_shape", True)),
+            select_size=bool(d.get("select_size", True)),
+            select_colour=bool(d.get("select_colour", True)),
+            select_vein=bool(d.get("select_vein", True)),
+            select_texture=bool(d.get("select_texture", True)),
         )
 
 
-# Fixed baseline hyperparameters: intentionally close in spirit to the
-# historical architecture (3 conv blocks, 32 base channels) but trained with
-# AdamW instead of plain Adam, so the baseline experiment isolates the effect
-# of the optimizer/pipeline rewrite before MOGEO search is introduced.
+# Fixed baseline hyperparameters: standard CNN architecture with AdamW,
+# and all 5 feature groups enabled.
 BASELINE_HPARAMS = HParams(
     num_blocks=3,
     base_channels=32,
@@ -113,9 +136,17 @@ BASELINE_HPARAMS = HParams(
     weight_decay=1e-4,
     batch_size=32,
     label_smoothing=0.0,
+    use_features=True,
+    feature_proj_dim=32,
+    select_shape=True,
+    select_size=True,
+    select_colour=True,
+    select_vein=True,
+    select_texture=True,
 )
 
 
 def ensure_dirs(*dirs: str) -> None:
     for d in dirs:
         os.makedirs(d, exist_ok=True)
+

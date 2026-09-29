@@ -20,7 +20,7 @@ import time
 import pandas as pd
 
 from pipeline import config
-from pipeline.data import build_manifest
+from pipeline.data import build_manifest, load_features_dict
 from pipeline.evaluate import plot_mogeo_convergence
 from pipeline.mogeo import MOGEO
 from pipeline.train import train_one_run
@@ -35,7 +35,8 @@ from pipeline.utils import (
 MOGEO_RESULTS_FIELDS = [
     "generation", "eagle_idx", "candidate_id", "val_acc", "val_macro_f1",
     "epochs_trained", "num_params", "num_blocks", "base_channels", "dropout",
-    "lr", "weight_decay", "batch_size", "label_smoothing",
+    "lr", "weight_decay", "batch_size", "label_smoothing", "feature_proj_dim",
+    "select_shape", "select_size", "select_colour", "select_vein", "select_texture",
 ]
 
 
@@ -50,15 +51,16 @@ def append_mogeo_result(path: str, row: dict) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MOGEO search over CNN hyperparameters.")
+    parser = argparse.ArgumentParser(description="MOGEO search over CNN hyperparameters and feature selection.")
     parser.add_argument("--dataset-dir", default=config.DEFAULT_DATASET_DIR)
+    parser.add_argument("--features-csv", default=config.DEFAULT_FEATURES_FILENAME)
     parser.add_argument("--output-dir", default=config.DEFAULT_OUTPUT_DIR)
     parser.add_argument("--pop-size", type=int, default=8)
     parser.add_argument("--generations", type=int, default=6)
     parser.add_argument("--candidate-epochs", type=int, default=config.MOGEO_CANDIDATE_EPOCHS)
     parser.add_argument("--candidate-patience", type=int, default=4)
     parser.add_argument("--seed", type=int, default=config.SEED)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
@@ -72,7 +74,17 @@ def main():
     print(leakage_report(df.to_dict("records")))
 
     device = get_device()
-    print(f"Device: {device}")
+    print(f"Hardware Device: {device}")
+    if device.type == "cuda":
+        import torch
+        print(f"  GPU: {torch.cuda.get_device_name(0)}")
+
+    features_csv_path = os.path.join(args.output_dir, args.features_csv)
+    features_dict = load_features_dict(features_csv_path, df)
+    if features_dict:
+        print(f"Loaded {len(features_dict)} feature records from {features_csv_path}")
+    else:
+        print("No features CSV found; MOGEO will optimize visual CNN features.")
 
     log_path = os.path.join(results_dir, config.EXPERIMENT_LOG_FILENAME)
     mogeo_results_path = os.path.join(results_dir, config.MOGEO_RESULTS_FILENAME)
@@ -94,6 +106,7 @@ def main():
             seed=args.seed,
             verbose=False,
             save_weights=False,
+            features_dict=features_dict,
         )
         dt = time.time() - t0
         extra = {"epochs_trained": result["epochs_trained"], "num_params": result["num_params"], "wall_time_s": dt}
@@ -112,7 +125,9 @@ def main():
             "epochs_trained": ind.extra.get("epochs_trained"),
             "num_params": ind.extra.get("num_params"),
             **{k: ind.hparams[k] for k in ["num_blocks", "base_channels", "dropout", "lr",
-                                            "weight_decay", "batch_size", "label_smoothing"]},
+                                            "weight_decay", "batch_size", "label_smoothing",
+                                            "feature_proj_dim", "select_shape", "select_size",
+                                            "select_colour", "select_vein", "select_texture"]},
         })
         append_experiment_log(log_path, {
             "run_id": ind.candidate_id,

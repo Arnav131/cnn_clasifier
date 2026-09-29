@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from . import config
+from .features import FEATURE_NAMES
 from .utils import file_md5
 
 MANIFEST_COLUMNS = ["filepath", "label", "class_idx", "split", "file_hash"]
@@ -167,6 +168,47 @@ def load_classes(splits_dir: str) -> List[str]:
         return json.load(f)
 
 
+def load_features_dict(features_csv: str, df: pd.DataFrame) -> Optional[Dict[str, np.ndarray]]:
+    """Loads extracted features CSV and applies StandardScaler fitted strictly on dev_train.
+
+    Fitting the scaler strictly on dev_train ensures no data leakage into dev_val
+    or final_test.
+    """
+    if not os.path.exists(features_csv):
+        return None
+
+    feats_df = pd.read_csv(features_csv)
+    if "filepath" not in feats_df.columns:
+        return None
+
+    feat_cols = [c for c in FEATURE_NAMES if c in feats_df.columns]
+    if not feat_cols:
+        return None
+
+    from sklearn.preprocessing import StandardScaler
+
+    dev_train_files = set(df[df["split"] == "dev_train"]["filepath"])
+    train_mask = feats_df["filepath"].isin(dev_train_files)
+
+    scaler = StandardScaler()
+    if train_mask.sum() > 0:
+        scaler.fit(feats_df.loc[train_mask, feat_cols].fillna(0.0).values)
+    else:
+        scaler.fit(feats_df[feat_cols].fillna(0.0).values)
+
+    scaled_matrix = scaler.transform(feats_df[feat_cols].fillna(0.0).values)
+
+    lookup: Dict[str, np.ndarray] = {}
+    for idx, row in feats_df.iterrows():
+        # Store both normal and normalized path variations
+        fp = str(row["filepath"]).replace("\\", "/")
+        vec = scaled_matrix[idx].astype(np.float32)
+        lookup[fp] = vec
+        lookup[str(row["filepath"])] = vec
+
+    return lookup
+
+
 def get_transforms(split: str, image_size: int = config.IMAGE_SIZE) -> transforms.Compose:
     if split == "dev_train":
         return transforms.Compose(
@@ -190,10 +232,18 @@ def get_transforms(split: str, image_size: int = config.IMAGE_SIZE) -> transform
 
 
 class PlantDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, dataset_dir: str, split: str, image_size: int = config.IMAGE_SIZE):
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        dataset_dir: str,
+        split: str,
+        image_size: int = config.IMAGE_SIZE,
+        features_dict: Optional[Dict[str, np.ndarray]] = None,
+    ):
         self.df = df[df["split"] == split].reset_index(drop=True)
         self.dataset_dir = dataset_dir
         self.transform = get_transforms(split, image_size)
+        self.features_dict = features_dict
 
     def __len__(self) -> int:
         return len(self.df)
@@ -203,7 +253,16 @@ class PlantDataset(Dataset):
         abs_path = os.path.join(self.dataset_dir, row["filepath"])
         image = Image.open(abs_path).convert("RGB")
         image = self.transform(image)
-        return image, int(row["class_idx"]), row["filepath"]
+
+        rel_path = row["filepath"]
+        rel_norm = str(rel_path).replace("\\", "/")
+        if self.features_dict is not None and (rel_norm in self.features_dict or rel_path in self.features_dict):
+            feat_arr = self.features_dict.get(rel_norm, self.features_dict.get(rel_path))
+            feat_tensor = torch.from_numpy(feat_arr)
+        else:
+            feat_tensor = torch.zeros(len(FEATURE_NAMES), dtype=torch.float32)
+
+        return image, int(row["class_idx"]), feat_tensor, row["filepath"]
 
 
 def get_dataloader(
@@ -212,17 +271,20 @@ def get_dataloader(
     split: str,
     batch_size: int,
     image_size: int = config.IMAGE_SIZE,
-    num_workers: int = 2,
+    num_workers: int = config.NUM_WORKERS,
     shuffle: Optional[bool] = None,
+    features_dict: Optional[Dict[str, np.ndarray]] = None,
 ) -> DataLoader:
-    dataset = PlantDataset(df, dataset_dir, split, image_size)
+    dataset = PlantDataset(df, dataset_dir, split, image_size, features_dict=features_dict)
     if shuffle is None:
         shuffle = split == "dev_train"
+    import torch
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=torch.cuda.is_available(),
         drop_last=False,
     )
+

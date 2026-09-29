@@ -14,7 +14,7 @@ import os
 import time
 
 from pipeline import config
-from pipeline.data import build_manifest
+from pipeline.data import build_manifest, load_features_dict
 from pipeline.evaluate import plot_training_curves
 from pipeline.train import train_one_run
 from pipeline.utils import append_experiment_log, get_device, leakage_report, set_seed
@@ -23,11 +23,12 @@ from pipeline.utils import append_experiment_log, get_device, leakage_report, se
 def main():
     parser = argparse.ArgumentParser(description="Baseline CNN training (AdamW, fixed hyperparameters).")
     parser.add_argument("--dataset-dir", default=config.DEFAULT_DATASET_DIR)
+    parser.add_argument("--features-csv", default=config.DEFAULT_FEATURES_FILENAME)
     parser.add_argument("--output-dir", default=config.DEFAULT_OUTPUT_DIR)
     parser.add_argument("--epochs", type=int, default=config.BASELINE_EPOCHS)
     parser.add_argument("--patience", type=int, default=config.BASELINE_EARLY_STOP_PATIENCE)
     parser.add_argument("--seed", type=int, default=config.SEED)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
@@ -43,7 +44,18 @@ def main():
           f"final_test={sum(df.split=='final_test')}")
 
     device = get_device()
-    print(f"Device: {device}")
+    print(f"Hardware Device: {device}")
+    if device.type == "cuda":
+        import torch
+        print(f"  GPU: {torch.cuda.get_device_name(0)}")
+        print(f"  CUDA Capability: {torch.cuda.get_device_capability(0)}")
+
+    features_csv_path = os.path.join(args.output_dir, args.features_csv)
+    features_dict = load_features_dict(features_csv_path, df)
+    if features_dict:
+        print(f"Loaded {len(features_dict)} feature records from {features_csv_path}")
+    else:
+        print("No features CSV found or features omitted; running visual-only CNN baseline.")
 
     best_ckpt = os.path.join(checkpoint_dir, config.BASELINE_CHECKPOINT_NAME)
     last_ckpt = os.path.join(checkpoint_dir, "baseline_last.pt")
@@ -65,6 +77,7 @@ def main():
         resume=args.resume,
         num_workers=args.num_workers,
         seed=args.seed,
+        features_dict=features_dict,
     )
     dt = time.time() - t0
 

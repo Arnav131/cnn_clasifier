@@ -28,6 +28,10 @@ from pipeline.evaluate import load_model_from_checkpoint, run_inference, compute
 from pipeline.utils import get_device
 
 
+from pipeline.features import extract_all_features, features_to_vector
+from pipeline.segmentation import preprocess_image
+
+
 def load_properties(properties_csv: str):
     if not os.path.exists(properties_csv):
         return {}
@@ -38,11 +42,22 @@ def load_properties(properties_csv: str):
 
 
 def predict_image(model, image_path: str, classes, device, top_k: int = 5):
+    # 1. Preprocessing and Image Segmentation (Flowchart Step 4 & 5)
+    seg_img, mask = preprocess_image(image_path, target_size=(config.IMAGE_SIZE, config.IMAGE_SIZE))
+
+    # 2. Feature Extraction: Shape, Size, Colour, Vein, Texture (Flowchart Step 6)
+    feats = extract_all_features(seg_img, mask)
+    feat_vec = features_to_vector(feats)
+    feat_tensor = torch.from_numpy(feat_vec).unsqueeze(0).to(device)
+
+    # 3. Image Tensor Transform
     transform = get_transforms("final_test", image_size=config.IMAGE_SIZE)
-    image = Image.open(image_path).convert("RGB")
-    tensor = transform(image).unsqueeze(0).to(device)
+    pil_seg = Image.fromarray(seg_img)
+    tensor = transform(pil_seg).unsqueeze(0).to(device)
+
+    # 4. CNN Inference with Feature Fusion (Flowchart Step 8 & 11)
     with torch.no_grad():
-        logits = model(tensor)
+        logits = model(tensor, feat_tensor)
         probs = torch.softmax(logits, dim=1)[0]
     top_probs, top_idx = torch.topk(probs, k=min(top_k, len(classes)))
     return [(classes[i], float(p)) for p, i in zip(top_probs.tolist(), top_idx.tolist())]

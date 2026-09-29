@@ -1,0 +1,25 @@
+# Local Machine Requirements for Medicinal Plant Classifier Pipeline
+# Python 3.10+ recommended
+
+# Core Scientific & Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.2.0
+
+# Image Processing, Segmentation & Feature Extraction (Flowchart Steps 4, 5, 6)
+opencv-python>=4.8.0
+scikit-image>=0.21.0
+Pillow>=9.5.0
+
+# Visualization & Progress
+matplotlib>=3.7.0
+tqdm>=4.65.0
+
+# Deep Learning Framework
+# Note: For NVIDIA GPU acceleration on Windows, install CUDA-enabled PyTorch:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# (or cu118 depending on your installed NVIDIA CUDA Driver).
+# If running CPU or DirectML, regular wheels work:
+torch>=2.0.0
+torchvision>=0.15.0

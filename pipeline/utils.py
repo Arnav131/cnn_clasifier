@@ -40,7 +40,7 @@ def file_md5(path: str, chunk_size: int = 1 << 20) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Checkpointing (resumable across Colab disconnects)
+# Checkpointing (atomic & resumable)
 # ---------------------------------------------------------------------------
 def save_checkpoint(path: str, state: Dict) -> None:
     tmp_path = path + ".tmp"

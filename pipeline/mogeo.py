@@ -1,13 +1,17 @@
 """Multi-Objective Golden Eagle Optimizer (MOGEO).
 
-This is a real population-based metaheuristic -- NOT random search and NOT
-grid search. It implements the core mechanics of the Golden Eagle Optimizer
-(Mohammed & Rashid, 2021) -- per-eagle attack/cruise flight vectors, a
-generation-dependent attack propensity schedule, and per-eagle memory of
-visited points -- extended to the multi-objective case using the standard
-NSGA-II machinery (Pareto dominance, fast non-dominated sorting, crowding
-distance) to maintain a non-dominated archive and select flight targets
-("prey") when there is no single global best.
+This is a real population-based metaheuristic implementing the core mechanics of
+the Golden Eagle Optimizer (Mohammed & Rashid, 2021) extended to multi-objective
+optimization using NSGA-II machinery (Pareto dominance, fast non-dominated
+sorting, crowding distance).
+
+Directly implements the 'MOGEO Optimization (Feature Selection and Optimization)'
+stage of the flowchart:
+  1. Feature Selection: selects optimal subsets from the 5 hand-crafted feature
+     groups (Shape, Size, Colour, Vein, Texture).
+  2. Architecture & Training Optimization: optimizes CNN depth (num_blocks),
+     channel capacity (base_channels), dropout, learning rate, weight decay,
+     batch size, label smoothing, and feature projection dimension.
 
 Objectives (both maximized): internal validation accuracy and internal
 validation macro-F1, evaluated ONLY on the dev_val split. final_test is
@@ -15,7 +19,7 @@ never touched here.
 
 The optimizer is resumable: state (population, archive, RNG, in-progress
 generation) is checkpointed to disk after every single candidate evaluation,
-so a Colab disconnect loses at most one partially-evaluated candidate.
+so interruptions never lose completed search progress.
 """
 from __future__ import annotations
 
@@ -31,12 +35,13 @@ Objectives = Tuple[float, float]  # (val_acc, val_macro_f1), both maximized
 
 
 # ---------------------------------------------------------------------------
-# Search space: normalized [0, 1]^7 <-> HParams
+# Search space: normalized [0, 1]^13 <-> HParams (Features + Architecture)
 # ---------------------------------------------------------------------------
 class HyperParamSpace:
-    DIM = 7
+    DIM = 13
     BASE_CHANNEL_CHOICES = [16, 32, 64]
     BATCH_SIZE_CHOICES = [16, 32, 64]
+    FEATURE_PROJ_DIM_CHOICES = [16, 32, 64]
 
     NUM_BLOCKS_RANGE = (3, 5)
     DROPOUT_RANGE = (0.2, 0.6)
@@ -69,6 +74,26 @@ class HyperParamSpace:
         lo, hi = cls.LABEL_SMOOTHING_RANGE
         label_smoothing = lo + v[6] * (hi - lo)
 
+        f_idx = min(int(v[7] * len(cls.FEATURE_PROJ_DIM_CHOICES)), len(cls.FEATURE_PROJ_DIM_CHOICES) - 1)
+        feature_proj_dim = cls.FEATURE_PROJ_DIM_CHOICES[f_idx]
+
+        # Feature selection decisions for the 5 feature groups
+        # Threshold at 0.35 so features are included with high exploration probability
+        select_shape = bool(v[8] >= 0.35)
+        select_size = bool(v[9] >= 0.35)
+        select_colour = bool(v[10] >= 0.35)
+        select_vein = bool(v[11] >= 0.35)
+        select_texture = bool(v[12] >= 0.35)
+
+        # Ensure at least one feature group is selected if use_features is active
+        if not any([select_shape, select_size, select_colour, select_vein, select_texture]):
+            max_idx = int(np.argmax(v[8:13]))
+            if max_idx == 0: select_shape = True
+            elif max_idx == 1: select_size = True
+            elif max_idx == 2: select_colour = True
+            elif max_idx == 3: select_vein = True
+            else: select_texture = True
+
         return HParams(
             num_blocks=num_blocks,
             base_channels=base_channels,
@@ -77,6 +102,13 @@ class HyperParamSpace:
             weight_decay=weight_decay,
             batch_size=batch_size,
             label_smoothing=float(label_smoothing),
+            use_features=True,
+            feature_proj_dim=feature_proj_dim,
+            select_shape=select_shape,
+            select_size=select_size,
+            select_colour=select_colour,
+            select_vein=select_vein,
+            select_texture=select_texture,
         )
 
 

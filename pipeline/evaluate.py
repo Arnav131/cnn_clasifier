@@ -30,9 +30,15 @@ def run_inference(model, loader, device) -> Tuple[List[int], List[int], List[str
     model.eval()
     y_true, y_pred, filepaths = [], [], []
     all_probs = []
-    for images, labels, paths in loader:
-        images = images.to(device)
-        logits = model(images)
+    for batch in loader:
+        if len(batch) == 4:
+            images, labels, features, paths = batch
+            images, features = images.to(device), features.to(device)
+            logits = model(images, features)
+        else:
+            images, labels, paths = batch
+            images = images.to(device)
+            logits = model(images)
         probs = torch.softmax(logits, dim=1)
         preds = torch.argmax(probs, dim=1)
         y_true.extend(labels.tolist())

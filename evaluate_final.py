@@ -14,7 +14,7 @@ import argparse
 import os
 
 from pipeline import config
-from pipeline.data import build_manifest, load_classes
+from pipeline.data import build_manifest, get_dataloader, load_classes, load_features_dict
 from pipeline.evaluate import (
     compute_metrics,
     error_analysis,
@@ -23,18 +23,18 @@ from pipeline.evaluate import (
     run_inference,
     write_accuracy_report,
 )
-from pipeline.data import get_dataloader
 from pipeline.utils import get_device, leakage_report, set_seed
 
 
 def main():
     parser = argparse.ArgumentParser(description="One-time final_test evaluation of best.pt.")
     parser.add_argument("--dataset-dir", default=config.DEFAULT_DATASET_DIR)
+    parser.add_argument("--features-csv", default=config.DEFAULT_FEATURES_FILENAME)
     parser.add_argument("--output-dir", default=config.DEFAULT_OUTPUT_DIR)
     parser.add_argument("--checkpoint", default=None,
                          help=f"Defaults to checkpoints/{config.FINAL_CHECKPOINT_NAME}")
     parser.add_argument("--seed", type=int, default=config.SEED)
-    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()
 
@@ -51,14 +51,25 @@ def main():
     classes = load_classes(splits_dir)
 
     device = get_device()
-    print(f"Device: {device}")
+    print(f"Hardware Device: {device}")
+
+    features_csv_path = os.path.join(args.output_dir, args.features_csv)
+    features_dict = load_features_dict(features_csv_path, df)
+    if features_dict:
+        print(f"Loaded {len(features_dict)} feature records for evaluation.")
 
     model, ckpt = load_model_from_checkpoint(checkpoint_path, num_classes=len(classes), device=device)
     print(f"Loaded checkpoint from {checkpoint_path} (trained to epoch {ckpt.get('epoch')}, "
           f"dev_val acc at save time = {ckpt.get('val_acc'):.4f})")
 
     test_loader = get_dataloader(
-        df, args.dataset_dir, "final_test", args.batch_size, num_workers=args.num_workers, shuffle=False
+        df,
+        args.dataset_dir,
+        "final_test",
+        args.batch_size,
+        num_workers=args.num_workers,
+        shuffle=False,
+        features_dict=features_dict,
     )
     n_test = sum(df.split == "final_test")
     print(f"\n=== Evaluating ONCE on final_test ({n_test} images, never used before now) ===")

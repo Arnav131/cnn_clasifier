@@ -29,9 +29,15 @@ def evaluate(model: nn.Module, loader, device, criterion) -> Tuple[float, float,
     total_loss, n = 0.0, 0
     all_preds: List[int] = []
     all_labels: List[int] = []
-    for images, labels, _ in loader:
-        images, labels = images.to(device), labels.to(device)
-        logits = model(images)
+    for batch in loader:
+        if len(batch) == 4:
+            images, labels, features, _ = batch
+            images, labels, features = images.to(device), labels.to(device), features.to(device)
+            logits = model(images, features)
+        else:
+            images, labels, _ = batch
+            images, labels = images.to(device), labels.to(device)
+            logits = model(images)
         loss = criterion(logits, labels)
         total_loss += loss.item() * images.size(0)
         n += images.size(0)
@@ -49,10 +55,17 @@ def train_one_epoch(model: nn.Module, loader, optimizer, criterion, device) -> T
     total_loss, n = 0.0, 0
     all_preds: List[int] = []
     all_labels: List[int] = []
-    for images, labels, _ in loader:
-        images, labels = images.to(device), labels.to(device)
-        optimizer.zero_grad(set_to_none=True)
-        logits = model(images)
+    for batch in loader:
+        if len(batch) == 4:
+            images, labels, features, _ = batch
+            images, labels, features = images.to(device), labels.to(device), features.to(device)
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(images, features)
+        else:
+            images, labels, _ = batch
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(images)
         loss = criterion(logits, labels)
         loss.backward()
         optimizer.step()
@@ -78,10 +91,11 @@ def train_one_run(
     resume: bool = False,
     num_classes: int = config.NUM_CLASSES,
     image_size: int = config.IMAGE_SIZE,
-    num_workers: int = 2,
+    num_workers: int = config.NUM_WORKERS,
     seed: int = config.SEED,
     verbose: bool = True,
     save_weights: bool = True,
+    features_dict: Optional[Dict[str, np.ndarray]] = None,
 ) -> Dict:
     """Trains a single model with AdamW on dev_train, validating on dev_val.
 
@@ -89,9 +103,15 @@ def train_one_run(
     epochs_trained, num_params, stopped_early}.
     """
     set_seed(seed)
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
 
-    train_loader = get_dataloader(df, dataset_dir, "dev_train", hparams.batch_size, image_size, num_workers)
-    val_loader = get_dataloader(df, dataset_dir, "dev_val", hparams.batch_size, image_size, num_workers)
+    train_loader = get_dataloader(
+        df, dataset_dir, "dev_train", hparams.batch_size, image_size, num_workers, features_dict=features_dict
+    )
+    val_loader = get_dataloader(
+        df, dataset_dir, "dev_val", hparams.batch_size, image_size, num_workers, features_dict=features_dict
+    )
 
     model = build_model(hparams, num_classes=num_classes).to(device)
     optimizer = AdamW(model.parameters(), lr=hparams.lr, weight_decay=hparams.weight_decay)
